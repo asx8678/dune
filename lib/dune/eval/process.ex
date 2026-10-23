@@ -137,9 +137,26 @@ defmodule Dune.Eval.Process do
         # if send immediately, might arrive before an EXIT signal
         Process.send_after(report_to, {:reductions_exceeded, reductions}, 1)
 
-      {:reductions, _reductions} ->
+      {:reductions, reductions} ->
+        case check_interval(max_reductions - reductions) do
+          0 -> :ok
+          ms -> Process.sleep(ms)
+        end
+
         check_max_reductions(pid, report_to, max_reductions)
     end
+  end
+
+  # About twice the reductions a JIT-compiled tail-recursive loop runs in a
+  # millisecond on a fast core. While the remaining budget can't run out at
+  # this speed, the checker sleeps instead of keeping a scheduler busy for the
+  # whole evaluation; near the limit it polls without pausing, as before.
+  @max_reductions_per_ms 2_000_000
+  @max_check_interval_ms 10
+
+  @doc false
+  def check_interval(remaining_reductions) do
+    min(div(remaining_reductions, @max_reductions_per_ms), @max_check_interval_ms)
   end
 
   defp format_error(error, stacktrace)

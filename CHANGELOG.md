@@ -2,6 +2,11 @@
 
 ## Dev
 
+- Stop the reductions checker from keeping a scheduler busy for the whole evaluation.
+  It now sleeps for as long as the remaining budget can't run out (at most 10ms), so
+  waiting code with a large `:max_reductions` no longer costs a full core; near the
+  limit it polls without pausing, as before.
+
 ## v0.3.18 (2026-10-07)
 
 - Add a `:parse_timeout` option to specify the maximum time spent during parsing.
