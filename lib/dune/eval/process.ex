@@ -93,8 +93,13 @@ defmodule Dune.Eval.Process do
           :killed ->
             %Failure{type: :memory, message: "Execution stopped - memory limit exceeded"}
 
-          {error, stacktrace} ->
+          {error, [_ | _] = stacktrace} ->
             format_error(error, stacktrace)
+
+          # An exit that isn't an exception's: an allowed function exited
+          # (a Task.await that timed out, a call to a process that is gone).
+          reason ->
+            exit_failure(reason)
         end
 
       {:EXIT, _other_pid, reason} ->
@@ -187,8 +192,12 @@ defmodule Dune.Eval.Process do
       |> Enum.at(1)
 
     # TODO properly pass stacktrace
-    %Failure{type: :exception, message: message}
+    %Failure{type: :exception, message: message || exit_message({error, [head]})}
   end
+
+  defp exit_failure(reason), do: %Failure{type: :exception, message: exit_message(reason)}
+
+  defp exit_message(reason), do: "** (exit) " <> Exception.format_exit(reason)
 
   defp format_compile_error(error, diagnostics, stacktrace) do
     message =

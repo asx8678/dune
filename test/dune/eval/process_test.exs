@@ -3,6 +3,12 @@ defmodule ReductionsCheckWaiter do
   def wait(ms), do: Process.sleep(ms)
 end
 
+# An allowed function that exits, as a host's call into its own processes
+# can (a Task.await that times out, a stopped server).
+defmodule ExitingCall do
+  def exit_with(reason), do: exit(reason)
+end
+
 defmodule Dune.Eval.ProcessTest do
   use ExUnit.Case, async: true
 
@@ -12,6 +18,12 @@ defmodule Dune.Eval.ProcessTest do
     use Dune.Allowlist, extend: Dune.Allowlist.Default
 
     allow ReductionsCheckWaiter, only: [:wait]
+  end
+
+  defmodule ExitAllowlist do
+    use Dune.Allowlist, extend: Dune.Allowlist.Default
+
+    allow ExitingCall, only: [:exit_with]
   end
 
   describe "check_interval/1" do
@@ -46,6 +58,40 @@ defmodule Dune.Eval.ProcessTest do
     # Polling in a tight loop runs millions of reductions in 100 ms.
     assert later - before < 100_000
     assert %Dune.Success{value: :ok} = Task.await(task)
+  end
+
+  describe "an allowed call that exits" do
+    test "fails with the exit's reason when it isn't an exception's" do
+      for {reason, shown} <- [
+            {:boom, "** (exit) :boom"},
+            {{:a, :b}, "** (exit) {:a, :b}"},
+            {{:shutdown, []}, "** (exit) shutdown: []"},
+            {{:timeout, {Task, :await, [:ref, 5000]}},
+             "** (exit) exited in: Task.await(:ref, 5000)"}
+          ] do
+        code = "ExitingCall.exit_with(#{inspect(reason)})"
+
+        assert %Dune.Failure{type: :exception, message: message} =
+                 Dune.eval_string(code, allowlist: ExitAllowlist),
+               "#{code} didn't fail"
+
+        assert message =~ shown, "#{code} failed with #{inspect(message)}"
+      end
+    end
+
+    test "fails as an exception does when it has a stacktrace's shape" do
+      assert %Dune.Failure{type: :exception, message: message} =
+               Dune.eval_string(~S|ExitingCall.exit_with({:oops, [{:m, :f, 0, []}]})|,
+                 allowlist: ExitAllowlist
+               )
+
+      assert is_binary(message)
+    end
+
+    test "leaves an exception's message as it was" do
+      assert %Dune.Failure{type: :exception, message: "** (RuntimeError) boom" <> _} =
+               Dune.eval_string(~S|raise "boom"|)
+    end
   end
 
   # The checker is the process with check_max_reductions/3 on its stack. It
